@@ -9,7 +9,7 @@ Main analyses were conducted in RStudio using R version 4.3.3 and can be found i
 
 The code to replicate the meta-_d_ model estimates can be found in the `model` directory, and is called `analysis.ipynb`.
 The data can be found in the **OSF** repository linked above. NOTE that the script requires the trial-level data to be in the same directory as the script, and the data should be in `.csv` format.
-The model we used is the implementation of the meta-_d_ model based on Signal Detection Theory by the [_cpm_ python toolbox](https://cpm-toolbox.net).
+The model we used is the implementation of the meta-_d_ model based on Signal Detection Theory by the [_cpm_ python toolbox](https://cpm-toolbox.net). Version used: 0.21.4
 The toolbox can be installed via pip:
 
 ```bash
