@@ -28,7 +28,7 @@ set.seed(123)
 # remove environment (optional)
 rm(list = ls())
 
-setwd('D:/Observational Study/BE EMA/')
+setwd('C:/Users/aleya/OneDrive/Desktop/Tuebs_work/ema_manuscript/Analysis/')
 set_theme(base = theme_bw()) # for plots
 
 #### Read in data ####
@@ -139,6 +139,9 @@ mean_notif_perSub <- complete_data %>%
   summarise(Number_notifs_answered = mean(perc_answered))
 
 to_remove<-mean_notif_perSub[mean_notif_perSub$Number_notifs_answered < 0.5,]
+
+#### Post-Review: if we want to try with 0.75 completion threshold ####
+#to_remove<-mean_notif_perSub[mean_notif_perSub$Number_notifs_answered < 0.75,]
 
 to_remove <- to_remove$dataID
 
@@ -572,7 +575,7 @@ symLogs_perDay <- symLogs_perDay %>%
 # need to ungroup to get anova to work
 symLogs_perDay<-symLogs_perDay%>%ungroup() 
 
-# time of day main ANOVA
+# day of week main ANOVA
 res.aov <- anova_test(data = symLogs_perDay, 
                       dv = num_sympLogs_perDay, wid = dataID, 
                       within = Day_of_week)
@@ -586,6 +589,121 @@ pwc <- symLogs_perDay %>%
   )
 pwc
 
+
+##### Post-Review: collapsing weekdays and weekends #####
+symLogs_perDay <- symptom_log_filtered %>%
+  group_by(dataID, dayType) %>%
+  summarise(num_sympLogs_perDay = n(), .groups = "drop") %>%
+  complete(
+    dataID,
+    dayType = c("Weekday", "Weekend"),
+    fill = list(num_sympLogs_perDay = 0)
+  )
+#account for differing days (get mean per day per subject)
+symLogs_perDay$corrected<-ifelse(symLogs_perDay$dayType == "Weekend",
+                                 symLogs_perDay$num_sympLogs_perDay/2, 
+                                 symLogs_perDay$num_sympLogs_perDay/5)
+
+num_symp_summary <- symLogs_perDay %>%
+  group_by(dayType) %>%
+  summarise(
+    n = sum(!is.na(corrected)),
+    mean = mean(corrected, na.rm = TRUE),
+    sd = sd(corrected, na.rm = TRUE),
+    se_Score = sd / sqrt(n)
+  )
+
+
+
+#difference plot
+ggplot(symLogs_perDay,
+       aes(x = dayType, y = corrected, group = dataID)) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.5) +
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    size = 4,
+    color = "black"
+  ) +
+  stat_summary(
+    fun.data = mean_cl_normal,
+    geom = "errorbar",
+    width = 0.15,
+    color = "black"
+  ) +
+  labs(
+    x = "",
+    y = "Mean symptom logs per day (corrected)",
+    title = "Symptom logging differs between weekdays and weekends"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+
+# Plot symptom logs by weekday vs weekend (simple bar chart)
+num_symp_summary %>%
+  ggplot(aes(x=dayType, y=mean, fill=dayType)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(ymin=mean - se_Score, ymax=mean + se_Score), width=0.2) +
+  theme_bw() +
+  labs(y = "Num Symptom Logs", title = "Num. Symp Logs by Day Type") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  theme(
+    plot.title = element_text(size = 15),
+    axis.title.x = element_text(size = 15),
+    axis.title.y = element_text(size = 15),
+    axis.text = element_text(size = 12)
+  )
+
+
+ggplot(symLogs_perDay, aes(x= forcats::fct_inorder(dayType), y=corrected, fill=dayType)) +
+  geom_flat_violin(aes(fill = dayType), position = position_nudge(x = .1, y = 0), adjust = 1.5, trim = FALSE, alpha = .5, colour = NA) +
+  geom_point(aes(x = dayType, y = corrected, colour = dayType), position = position_jitter(width = .01), size = 5, alpha = 0.5) +
+  geom_boxplot(aes(x = dayType, y = corrected, colour = dayType), position = position_dodgenudge(width = 0.3, x = -.2), outlier.shape = NA, alpha = .5, width = .3, colour = "black") +
+  geom_line(data = num_symp_summary, aes(x = dayType, y = mean, group = dayType, colour = dayType), linetype = 3, position = position_nudge(x = 0.1)) +
+  geom_point(data = num_symp_summary, aes(x = dayType, y = mean, group = dayType, colour = dayType), shape = 18, position = position_nudge(x = 0.1)) +
+  geom_errorbar(data = num_symp_summary, aes(x = dayType, y = mean, group = dayType, colour = dayType, ymin=mean - se_Score, ymax=mean + se_Score), width = .05, position = position_nudge(x = 0.1)) +
+  labs(y = expression(paste ("Number of Symptoms Logged"))) + 
+  labs(linetype = "Time_of_day", color = "Time_of_day", shape = "dataID") +
+  theme_half_open() +
+  theme(
+    axis.text = element_text(size = 15),
+    axis.title = element_text(size = 15), 
+    axis.title.y = element_text(size = 15),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.x = element_blank(), 
+    axis.title.x = element_blank(),
+    legend.position = 'none'
+  ) +
+  ggtitle("Number of Symptoms Logged per Day Type") +
+  theme(plot.title = element_text(size = 13, face = "bold"))+
+  geom_line(
+    aes(
+      x = forcats::fct_inorder(dayType),
+      y = corrected,
+      group = dataID
+    ),
+    colour = "grey40",
+    alpha = 0.1,
+    linewidth = 0.8
+  )
+
+#make data wider for paired t-test
+symLogs_perDay <- symLogs_perDay %>%
+  convert_as_factor(dataID, dayType)
+
+symLogs_perDay<-symLogs_perDay %>%
+pivot_wider(id_cols = dataID, names_from = dayType, values_from = corrected)
+
+#do paired t-test
+
+t.test(symLogs_perDay$Weekday, symLogs_perDay$Weekend, paired = TRUE, alternative = "two.sided")
+
+#wilcoxon because skewed data
+
+wilcox.test(symLogs_perDay$Weekday, symLogs_perDay$Weekend, paired=TRUE) 
 
 #### Quantify variability ####
 
@@ -659,7 +777,8 @@ summary_sympLog<-symptom_log_filtered %>%
   group_by(dataID, beID) %>%
   summarise(Symptom_count = sum(SymptomLog))
 
-
+median(summary_sympLog$Symptom_count)
+IQR(summary_sympLog$Symptom_count)
 
 summary_ema_task<-task_data %>%
   group_by(dataID) %>%
@@ -889,7 +1008,6 @@ ggplot(OCI_summary, aes(x=Dimension, y=mean_Score, fill=Dimension)) +
   theme_bw() +
   labs(y = "Mean Score", title = "Mean Score by OC Dimension") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
 
 
 #### Find average time difference between symptom logs (a measure of density) ####
@@ -1284,6 +1402,25 @@ confint(model)
 qqnorm(resid(model))
 qqline(resid(model))
 
+##### Post-Review: collapsing days of week into weekdays and weekends #####
+
+#ocd
+model<-lmerTest::lmer(zOCD~ dayType + work +
+                        (1 | dataID), data = new)
+
+summary(model)
+vif(model) #variance inflation - dropped Sunday
+confint(model) #confidence intervals
+
+
+#confidence
+model<-lmerTest::lmer(zConfidence~ dayType + work +
+                        (1 | dataID), data = new)
+
+summary(model)
+vif(model) #variance inflation - dropped Sunday
+confint(model) #confidence intervals
+
 
 ##### Day of Week effects on other state variables #####
 
@@ -1440,12 +1577,16 @@ ggplot(as.data.frame(symplog_count), aes(factor(Symptom_count), n)) +
   geom_col(color="black", fill="tan1", position = 'dodge')+
   xlab ("Symptoms Logged") + ylab("Counts")+
   theme_bw()+
-  ggtitle (label = 'Symptoms Logged Per Participant; N = 118 with >= 1 symptom log')+
+  ggtitle (label = 'Symptoms Logged Per Participant; N = 119 with >= 1 symptom log')+
   font("xlab", size = 15)+
   font("ylab", size = 15)+
   font("title", size = 15)+
   theme(axis.text.x = element_text(size = 10),
         axis.text.y = element_text(size = 10))
+
+
+
+
 
 ##### Other States #####
 
@@ -1623,6 +1764,28 @@ for (m in 1:length(dvList)) {
   pcor_results[[m]] <- pcor(partCorr, method = "spearman")
   
 }
+
+##### Post-Review: Regressing out all items at once #####
+
+# rosenburg
+
+model<-lm(rosenberg_sum ~ OCD + Anxiety + Confidence + Sleep + Think_clear + Happy, data = summary_ema_OCI_traitQ)
+summary(model)
+vif(model)
+confint(model)
+
+# caioc 
+
+model<-lm(caoic_sum ~ OCD + Anxiety + Confidence + Sleep + Think_clear + Happy, data = summary_ema_OCI_traitQ)
+summary(model)
+vif(model)
+confint(model)
+
+#oci
+model<-lm(OCI_total ~ OCD + Anxiety + Confidence + Sleep + Think_clear + Happy, data = summary_ema_OCI_traitQ)
+summary(model)
+vif(model)
+confint(model)
 
 
 ##### Plots of important State-Trait relationships #####
@@ -2105,7 +2268,6 @@ ema_without_taskRows = setdiff(new, EMA_task_matching_full) #get EMA rows that d
 EMA_task_new<-dplyr::bind_rows(ema_without_taskRows,EMA_task)
 EMA_task_new<-EMA_task_new[order(EMA_task_new$dataID, EMA_task_new$DateTime),]
 
-
 ##### Plot distribution of task measures #####
 
 ggplot(summary_ema_OCI_traitQ, aes(x=abs_evdiff)) + theme_bw() +
@@ -2138,16 +2300,16 @@ ggplot(summary_ema_OCI_traitQ, aes(x=meanChoiceRT)) + theme_bw() +
 
 task_data_new <-EMA_task %>%
   group_by(dataID) %>%
-  dplyr::mutate( notif_num=row_number())
+  dplyr::mutate(notif_num=row_number())
 
 
 task_data_new<-task_data_new[task_data_new$notif_num < 9,]
 
 #abs ev diff (signal strength)
 task_data_new %>% group_by(dataID, notif_num) %>%
-  summarise(zMeanState = mean(zabs_evdiff, na.rm=T)) %>% ungroup() %>%
+  summarise(zMeanState = mean(abs_evdiff, na.rm=T)) %>% ungroup() %>%
   # create a numeric vector for the weekdays (1=thurs as first day in the study; 7=weds)
-  mutate(d = as.numeric(notif_num))%>%
+  mutate(d = as.factor(notif_num))%>%
   ggplot(aes(x = d, y=zMeanState)) +
   stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
                    fun.data=mean_se, geom="point",size=0.6, alpha=0.6,
@@ -2159,16 +2321,22 @@ task_data_new %>% group_by(dataID, notif_num) %>%
   stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="errorbar",size=1.25, alpha=0.8) +
   stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="line",size=1.25, alpha=0.8) +
   labs(x="Notification Number", 
-       y="Absolute Ev Diff") +
-  ylim(-2, 2)+
+       y="Signal Strength") +
+  #ylim(-2, 2)+
   theme_classic(base_size=24) + 
   theme(axis.text.x = element_text(angle = 30, size=18), legend.position = "none")
 
+task_data_new %>% group_by(notif_num) %>%
+  summarise(zMeanState = mean(abs_evdiff, na.rm=T),
+            sd = sd(abs_evdiff, na.rm = T),
+            se = sd/sqrt(n())) %>% ungroup() %>%
+  mutate(d = as.numeric(notif_num))
+
 #confidence (metacognitive bias)
 task_data_new %>% group_by(dataID, notif_num) %>%
-  summarise(zMeanState = mean(zmeanConf, na.rm=T)) %>% ungroup() %>%
+  summarise(zMeanState = mean(meanConf, na.rm=T)) %>% ungroup() %>%
   # create a numeric vector for the weekdays (1=thurs as first day in the study; 7=weds)
-  mutate(d = as.numeric(notif_num))%>%
+  mutate(d = as.factor(notif_num))%>%
   ggplot(aes(x = d, y=zMeanState)) +
   stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
                    fun.data=mean_se, geom="point",size=0.6, alpha=0.6,
@@ -2184,11 +2352,22 @@ task_data_new %>% group_by(dataID, notif_num) %>%
   theme_classic(base_size=24) + 
   theme(axis.text.x = element_text(angle = 30, size=18), legend.position = "none")
 
+task_data_new %>% group_by(notif_num) %>%
+  summarise(zMeanState = mean(meanConf, na.rm=T),
+            sd = sd(meanConf, na.rm = T),
+            se = sd/sqrt(n())) %>% ungroup() %>%
+  mutate(d = as.numeric(notif_num))
+
+# check if there is an effect of day on metacognitive bias
+
+summary(lmerTest::lmer(zmeanConf~ i.Day + 
+                        (1 | dataID), data = task_data_new))
+
 #meanChoiceRT
 task_data_new %>% group_by(dataID, notif_num) %>%
-  summarise(zMeanState = mean(zmeanChoiceRT, na.rm=T)) %>% ungroup() %>%
+  summarise(zMeanState = mean(meanChoiceRT, na.rm=T)) %>% ungroup() %>%
   # create a numeric vector for the weekdays (1=thurs as first day in the study; 7=weds)
-  mutate(d = as.numeric(notif_num))%>%
+  mutate(d = as.factor(notif_num))%>%
   ggplot(aes(x = d, y=zMeanState)) +
   stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
                    fun.data=mean_se, geom="point",size=0.6, alpha=0.6,
@@ -2200,36 +2379,24 @@ task_data_new %>% group_by(dataID, notif_num) %>%
   stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="errorbar",size=1.25, alpha=0.8) +
   stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="line",size=1.25, alpha=0.8) +
   labs(x="Notification Number", 
-       y="Mean Confidence RT") +
+       y="Mean Choice RT (ms)") +
   theme_classic(base_size=24) + 
-  theme(axis.text.x = element_text(angle = 30, size=18), legend.position = "none")
+  theme(axis.text.x = element_text(angle = 30, size=18), legend.position = "none")+
+ylim(0, 5000)
 
 
-#meanConfRT
-task_data_new %>% group_by(dataID, notif_num) %>%
-  summarise(zMeanState = mean(zmeanConfRT, na.rm=T)) %>% ungroup() %>%
-  # create a numeric vector for the weekdays (1=thurs as first day in the study; 7=weds)
-  mutate(d = as.numeric(notif_num))%>%
-  ggplot(aes(x = d, y=zMeanState)) +
-  stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
-                   fun.data=mean_se, geom="point",size=0.6, alpha=0.6,
-                   position=position_dodge(width=0.1)) +
-  stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
-                   fun.data=mean_se, geom="line",size=0.6, alpha=0.6,
-                   position=position_dodge(width=0.1)) +
-  geom_hline(yintercept=0, linetype="dashed") +
-  stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="errorbar",size=1.25, alpha=0.8) +
-  stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="line",size=1.25, alpha=0.8) +
-  labs(x="Notification Number", 
-       y="Mean Confidence RT") +
-  theme_classic(base_size=24) + 
-  theme(axis.text.x = element_text(angle = 30, size=18), legend.position = "none")
+task_data_new %>% group_by(notif_num) %>%
+  summarise(zMeanState = mean(meanChoiceRT, na.rm=T),
+            sd = sd(meanChoiceRT, na.rm = T),
+            se = sd/sqrt(n())) %>% ungroup() %>%
+  mutate(d = as.numeric(notif_num))
+
 
 #meta-d'/d'
 task_data_new %>% group_by(dataID, notif_num) %>%
-  summarise(zMeanState = mean(zm_ratio, na.rm=T)) %>% ungroup() %>%
+  summarise(zMeanState = mean(m_ratio, na.rm=T)) %>% ungroup() %>%
   # create a numeric vector for the weekdays (1=thurs as first day in the study; 7=weds)
-  mutate(d = as.numeric(notif_num))%>%
+  mutate(d = as.factor(notif_num))%>%
   ggplot(aes(x = d, y=zMeanState)) +
   stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
                    fun.data=mean_se, geom="point",size=0.6, alpha=0.6,
@@ -2245,7 +2412,48 @@ task_data_new %>% group_by(dataID, notif_num) %>%
   theme_classic(base_size=24) + 
   theme(axis.text.x = element_text(angle = 30, size=18), legend.position = "none")
 
+task_data_new %>% group_by(notif_num) %>%
+  summarise(zMeanState = mean(m_ratio, na.rm=T),
+            sd = sd(m_ratio, na.rm = T),
+            se = sd/sqrt(n())) %>% ungroup() %>%
+  mutate(d = as.numeric(notif_num))
 
+#accuracy
+task_data_new %>% group_by(dataID, notif_num) %>%
+  summarise(zMeanState = mean(accuracy, na.rm=T)) %>% ungroup() %>%
+  # create a numeric vector for the weekdays (1=thurs as first day in the study; 7=weds)
+  mutate(d = as.numeric(notif_num))%>%
+  ggplot(aes(x = as.factor(d), y=zMeanState)) +
+  stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
+                   fun.data=mean_se, geom="point",size=0.6, alpha=0.6,
+                   position=position_dodge(width=0.1)) +
+  stat_summary_bin(aes(group=dataID, color=dataID), color="darkgray",
+                   fun.data=mean_se, geom="line",size=0.6, alpha=0.6,
+                   position=position_dodge(width=0.1)) +
+  geom_hline(yintercept=0, linetype="dashed") +
+  stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="errorbar",size=1.25, alpha=0.8) +
+  stat_summary_bin(aes(x=as.numeric(notif_num)), fun.data=mean_se, geom="line",size=1.25, alpha=0.8) +
+  labs(x="Notification Number", 
+       y="Staircased Accuracy") +
+  ylim(0.6, 0.8)+
+  theme_classic(base_size=24) + 
+  theme(axis.text.x = element_text(angle = 30, size=18), legend.position = "none")
+
+
+accuracy<-task_data_new %>% group_by(notif_num) %>%
+  summarise(zMeanState = mean(accuracy, na.rm=T),
+            sd = sd(accuracy, na.rm = T),
+            se = sd/sqrt(n())) %>% ungroup() %>%
+  mutate(d = as.numeric(notif_num))
+
+# check if there is an effect of day on accuracy
+
+model<-lmerTest::lmer(zAccuracy~ i.Day + 
+                         (1 | dataID), data = task_data_new)
+
+summary(model)
+
+confint(model)
 ##### Check metacognitive bias trajectory by time of day and day of week ######
 task_data <- task_data %>%
   mutate(Day_of_week = factor(Day_of_week, levels = c('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'))) 
@@ -2349,154 +2557,6 @@ vif(model)
 model<-lmerTest::lmer(zmeanConf~ Time_of_day_Evening + 
                         (1 | dataID), data = new)
 vif(model)
-
-#### Rough check of autocorrelations ####
-
-# Lagging taking into account the nested structure
-# by grouping by day, makes sure that only autocorrelations within single day are accounted for (i.e., lag value for 1st notif of the day is always NA)
-df <- EMA_data_filtered %>%
-  group_by(dataID, Day) %>%
-  mutate(across(c(zConfidence:zThink_clear), ~lag(.), .names = "{.col}lag")) %>% # Lag the variables
-  ungroup()
-
-df_task <- EMA_task %>%
-  group_by(dataID) %>%
-  mutate(across(c(zmeanConf,zm_ratio), ~lag(.), .names = "{.col}lag")) %>% # Lag the variables
-  ungroup()
-
-# for looking at effects of zsleep on zOCD per day and vice versa
-df_sleep<-EMA_data_filtered %>%
-  group_by(dataID, Day) %>%
-  summarise(meanzOCD = mean(zOCD, na.rm = TRUE),
-            meanzAnxiety = mean(zAnxiety, na.rm = TRUE),
-            meanzHappy = mean(zHappy, na.rm = TRUE),
-            sleep_by_day = mean(zSleep, na.rm = TRUE))
-
-df_sleep <- df_sleep %>%
-  mutate(
-    lagged_meanzOCD = lag(meanzOCD, 1),
-    lagged_meanzAnxiety = lag(meanzAnxiety, 1),
-    lagged_meanzHappy = lag(meanzHappy, 1),
-    lagged_sleep_by_day = lag(sleep_by_day, 1)
-  )
-
-# Replace NA with NaN in specified columns
-df <- df %>%
-  mutate(across(zConfidencelag:zThink_clearlag, ~ replace_na(., NaN)))
-
-df_task <- df_task %>%
-  mutate(across(zmeanConf:zm_ratio, ~ replace_na(., NaN)))
-
-
-df_sleep <- df_sleep %>%
-  mutate(across(meanzOCD:lagged_sleep_by_day, ~ replace_na(., NaN)))
-
-
-# function for autocorr scatterplot
-
-autocorr_plot <- function(data, var1, var2, print) {
-  
-  # Scatter plot of PA1 and PA1lag
-  x = data[[var1]]
-  y = data[[var2]]
-  
-  p <- data %>%
-    ggplot(aes(x = .data[[var1]], y = .data[[var2]])) +
-    geom_point(color='black', fill='orange', shape=21, size = 2) +
-    theme_bw() + 
-    geom_smooth(method = "lm", se = FALSE, color = "black") +
-    annotate("text", x = -1.5, y = 3, 
-             label = paste("Corr. =",round(cor(x, y, use="complete"),3), "\nP-value =", round(cor.test(x, y, use = "complete")$p.value,3)), 
-             size = 4)+
-    theme(
-      plot.title = element_text(size = 15),
-      axis.title.x = element_text(size = 15),
-      axis.title.y = element_text(size = 15),
-      axis.text = element_text(size = 12)
-    )
-  
-  print(p)
-  
-  if (print == TRUE) {
-    ggsave(paste0("Corrplot_", var1, "_", var2, ".png"), p)
-  }
-  
-  
-}
-
-##### autocorr, effects on OCD #####
-
-# OCD and confidence t + 1 
-autocorr_plot(df, "zConfidencelag", "zOCD", print = TRUE)
-
-# confidence and confidence t + 1 
-autocorr_plot(df, "zConfidencelag", "zConfidence", print = TRUE)
-
-# OCD and OCD t + 1 
-autocorr_plot(df, "zOCDlag", "zOCD", print = TRUE)
-
-# OCD and anxiety t + 1
-autocorr_plot(df, "zAnxietylag", "zOCD", print = TRUE)
-
-# OCD and think_clear t + 1 
-autocorr_plot(df, "zThink_clearlag", "zOCD", print = TRUE)
-
-#OCD and happiness t + 1
-autocorr_plot(df, "zHappylag", "zOCD", print = TRUE)
-
-#OCD and sleep for day after
-autocorr_plot(df_sleep, "lagged_meanzOCD", "sleep_by_day", print = TRUE)
-
-#anxiety and sleep for day after
-autocorr_plot(df_sleep, "lagged_meanzAnxiety", "sleep_by_day", print = TRUE)
-
-#happiness and sleep for day after
-autocorr_plot(df_sleep, "lagged_meanzHappy", "sleep_by_day", print = TRUE)
-
-##### autocorr, effects of OCD on logged variables #####
-
-# OCD and anxiety t + 1 
-autocorr_plot(df, "zOCDlag", "zAnxiety", print = TRUE)
-
-# OCD and think_clear t + 1
-autocorr_plot(df, "zOCDlag", "zThink_clear", print = TRUE)
-
-#OCD and happiness t + 1
-autocorr_plot(df, "zOCDlag", "zHappy", print = TRUE)
-
-##### same time point corr #####
-
-# OCD and sleep
-autocorr_plot(df, "zSleep", "zOCD", print = TRUE)
-
-# OCD and anxiety 
-autocorr_plot(df, "zAnxiety", "zOCD", print = TRUE)
-
-# OCD and think_clear  
-autocorr_plot(df, "zThink_clear", "zOCD", print = TRUE)
-
-#OCD and happiness
-autocorr_plot(df, "zHappy", "zOCD", print = TRUE)
-
-#sleep and anxiety
-autocorr_plot(df, "zSleep", "zAnxiety", print = TRUE)
-
-#sleep and happy
-autocorr_plot(df, "zSleep", "zHappy", print = TRUE)
-
-#mean OCD from whole day and sleep
-autocorr_plot(df_sleep, "sleep_by_day", "meanzOCD", print = TRUE)
-
-#mean anxiety from whole day and sleep
-autocorr_plot(df_sleep, "sleep_by_day", "meanzAnxiety", print = TRUE)
-
-#mean OCD from whole day and sleep
-autocorr_plot(df_sleep, "sleep_by_day", "meanzHappy", print = TRUE)
-
-#checking task autocorr
-autocorr_plot(df_task, "zmeanConflag", "zmeanConf", print = TRUE)
-autocorr_plot(df_task, "zmeta_d", "zmeanConf", print = TRUE)
-
 
 #### Effect of Activities and Social Context on States and Symptom Log ####
 
@@ -3168,7 +3228,7 @@ ggplot(df_est, aes(x = term, y = estimate)) +
   coord_flip()
 
 
-#### Do task measures correspond to OCD severity? No ####
+#### Do task measures correspond to notified OCD severity? ####
 
 #metacognitive bias
 model <-lm(zmeanConf ~ zOCD, data = EMA_task)
@@ -3324,6 +3384,12 @@ ggplot(cor_per_subject, aes(x = 1, y = conf_corr)) +
 shapiro.test(cor_per_subject$conf_corr) 
 wilcox.test(cor_per_subject$conf_corr, mu = 0)
 
+#calculate median
+median(cor_per_subject$conf_corr, na.rm = TRUE)
+
+#calculate % participants showing + correlation
+sum( cor_per_subject$conf_corr > 0.1  , na.rm = TRUE)/sum(complete.cases(cor_per_subject$conf_corr))
+sum( cor_per_subject$conf_corr < -0.1  , na.rm = TRUE)/sum(complete.cases(cor_per_subject$conf_corr))
 
 #check within-subjects correlation with metacognitive efficiency
 cor_per_subject<-EMA_task%>%
@@ -3358,10 +3424,46 @@ df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(
 
 # if we want to check only participants who have completed symptom logs
 
+#high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
 high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count >= 1, ]
 highSymp_id<-unique(high_symptom_count$dataID)
 
 df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id)
+
+#Post-review: count how many symptom logs per subject within 4 hour period are discarded 
+
+counts_per_subject <- df_symplog_lead %>%
+  group_by(dataID) %>%
+  summarise(
+    num = sum(Log_within4Hours, na.rm = TRUE) -
+      sum(!is.na(dateTime_EMA) & Log_within4Hours == 1, na.rm = TRUE),
+    
+    total_logs = sum(SymptomLog, na.rm = TRUE),
+    
+    perc_discarded = (num / total_logs) * 100,
+    
+    .groups = "drop"
+  )
+
+
+mean(counts_per_subject$num)
+median(counts_per_subject$num)
+
+sd(counts_per_subject$num)
+
+IQR(counts_per_subject$num)
+
+#histogram for raw number
+ggplot(counts_per_subject, aes(x=num)) + theme_bw() +
+  geom_histogram(aes(y=..density..), colour="black", fill="white", bins = 40)+
+  geom_density(alpha=.2, fill="darkseagreen2") + xlab ("Number of logs discarded") + ylab("Density")+
+  ggtitle (label = 'Number of logs discarded per participant')+
+  theme(
+    plot.title = element_text(size = 15),
+    axis.title.x = element_text(size = 15),
+    axis.text = element_text(size = 12)
+  )
+
 
 require(lme4)
 
@@ -3375,6 +3477,20 @@ library(blmeco)
 blmeco::dispersion_glmer(model) #value indicates no overdispersion
 
 vif(model) #variance inflation
+summary(model)
+
+#Post-review: compare model with and without random intercepts
+model <- glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear + (1 | dataID), data = df_symplog_lead, 
+               family = binomial, control = glmerControl(optimizer = "bobyqa"),
+               nAGQ = 1)
+
+reduced_model <- glm(
+  Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear,
+  data   = df_symplog_lead,
+  family = binomial(link = "logit")  # link optional; logit is default
+)
+
+anova(model, reduced_model, test = "Chisq")
 
 
 #checking only self-confidence
@@ -3388,7 +3504,6 @@ summary(glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zThink_clear + zConf
                 alone + with_others + (1 | dataID), data = df_symplog_lead, 
               family = binomial, control = glmerControl(optimizer = "bobyqa"),
               nAGQ = 10))
-
 
 #controlling for day of week and time of day
 new<-fastDummies::dummy_cols(df_symplog_lead, select_columns = c("Day_of_week","dayType"))
@@ -3406,31 +3521,10 @@ summary(glmer(Log_within4Hours ~ zAge + Gender_2 + zOCD + zAnxiety + zHappy + zS
               family = binomial, control = glmerControl(optimizer = "bobyqa"),
               nAGQ = 10))
 
-#check with slopes (not converging)
-summary(glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep 
-              + zConfidence + zThink_clear + (zOCD | dataID) + (zAnxiety | dataID) +
-                (zHappy | dataID) + (zConfidence | dataID) + (zThink_clear | dataID) +
-                (zSleep | dataID), data = df_symplog_lead, 
-              family = binomial))
-
-
-# check without sleep to retain all data (not just morning data)
-summary(glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy  + zThink_clear + zConfidence + (1 | dataID), data = df_symplog_lead, 
-              family = binomial, control = glmerControl(optimizer = "bobyqa"),
-              nAGQ = 10))
-
-m<-glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy  + zThink_clear + zConfidence + (1 | dataID), data = df_symplog_lead, 
-         family = binomial, control = glmerControl(optimizer = "bobyqa"),
-         nAGQ = 10)
-
-# since sleep is only tested in the morning and confidence is low in the morning 
-# check if there's a morning effect over confidence
-
-new<-fastDummies::dummy_cols(df_symplog_lead, select_columns = "Time_of_daylead") # using the symptom log time
-m<-glmer(Log_within4Hours ~  zConfidence*Time_of_daylead_Morning + zOCD + zAnxiety +  (1 | dataID), data = new, 
-         family = binomial, control = glmerControl(optimizer = "bobyqa"),
-         nAGQ = 10)
-#there is a significant negative interaction between morning and confidence
+#check with slopes (added more iterations to enable convergence)
+summary(glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear +
+                 ( zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear | dataID), data = df_symplog_lead, 
+               family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000))))
 
 #plot state variables predicting future symptom log
 m<-glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy  + zThink_clear + zConfidence + zSleep + (1 | dataID), data = df_symplog_lead, 
@@ -3477,6 +3571,7 @@ ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
         axis.text.y = element_text(size = 20, hjust = 1))+
   ylim(-0.8, 0.8)
 
+
 ##### checking symptom log effects in smaller time windows #####
 
 # 4 hours
@@ -3504,6 +3599,91 @@ df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(
 summary(glmer(Log_within4Hours ~  zConfidence + (1 | dataID), data = df_symplog_lead, 
               family = binomial, control = glmerControl(optimizer = "bobyqa"),
               nAGQ = 10))
+
+
+##### Post-review, check in only people who have logged more than once and remove high logger #####
+
+combined<-dplyr::bind_rows(EMA_data_filtered, symptom_log_filtered)
+combined<-combined[order(combined$dataID, combined$DateTime),]
+
+#make symptom log leading var
+df_symplog_lead <- combined %>%
+  group_by(dataID) %>%
+  mutate(across(c(DateTime, Time_of_day, SymptomLog), ~lead(.), .names = "{.col}lead")) %>% # make the var lead
+  ungroup()
+
+#replace NAs in symptom log with 0
+df_symplog_lead<-df_symplog_lead %>% mutate(SymptomLoglead = ifelse(is.na(SymptomLoglead), 0, SymptomLoglead))
+
+
+# find out which symptom logs are within 4 hours of an EMA
+df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(DateTimelead, DateTime, units = "hours") <= 4) & SymptomLoglead == 1, 1, 0))
+
+
+#checking results in only people who logged more than one symptom log, and remove extremely high logger
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
+highSymp_id<-unique(high_symptom_count$dataID)
+
+df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id)
+
+require(lme4)
+
+#check with all state variables predicting future symptom log
+m <- glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear + (1 | dataID), data = df_symplog_lead, 
+               family = binomial, control = glmerControl(optimizer = "bobyqa"),
+               nAGQ = 10)
+
+summary(m)
+
+#check with just confidence
+summary(glmer(Log_within4Hours ~ zConfidence + (1 | dataID), data = df_symplog_lead, 
+               family = binomial, control = glmerControl(optimizer = "bobyqa"),
+               nAGQ = 10))
+
+# make plot with model excluding subjects
+
+#plot state variables predicting future symptom log
+
+set_theme(base = theme_bw()) # for plots
+# Extract model estimates with confidence intervals
+df_est <- tidy(m, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "zOCD" ~ "OCD Severity Rating",
+    term == "zAnxiety" ~ "Anxiety",
+    term == "zHappy" ~ "Happiness",
+    term == "zSleep" ~ "Sleep Quality",
+    term == "zThink_clear" ~ "Brain Fog",
+    term == "zConfidence" ~ "Self-Confidence",
+    term == "zSleep" ~ "Sleep Quality",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of green colors
+green_gradient <- colorRampPalette(c("#d0f0c0", "#006400"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("ylab", size = 20) +
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))+
+  ylim(-0.8, 0.8)
+
 
 
 ##### Task #####
@@ -3556,9 +3736,21 @@ summary(glmer(Log_within4Hours ~  zAge + Gender_2 + zmeanConf + (1 | dataID), da
               family = binomial))
 
 #controlling for other task measures
-m <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + z_d + zmeta_d + zm_ratio + (1 | dataID), data = df_symplog_lead, 
+m <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead, 
            family = binomial, control = glmerControl(optimizer = "bobyqa"),
            nAGQ = 10)
+
+#Post-review: compare model with and without random intercepts
+model <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead, 
+               family = binomial, control = glmerControl(optimizer = "bobyqa"),
+               nAGQ = 1)
+reduced_model <- glm(
+  Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy,
+  data   = df_symplog_lead,
+  family = binomial(link = "logit")  # link optional; logit is default
+)
+
+anova(model, reduced_model, test = "Chisq")
 
 
 #with age and gender
@@ -3656,6 +3848,101 @@ df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(
 summary(glmer(Log_within4Hours ~  zmeanConf + (1 | dataID), data = df_symplog_lead, 
               family = binomial, control = glmerControl(optimizer = "bobyqa"),
               nAGQ = 10))
+
+
+##### Post-review:check in only people who have logged more than once, and remove high frequency logger #####
+
+##### Task #####
+
+task_with_symplog<-dplyr::bind_rows(task_data, symptom_log_filtered)
+task_with_symplog<-task_with_symplog[order(task_with_symplog$dataID, task_with_symplog$DateTime),]
+
+#make symptom log leading var
+df_symplog_lead <- task_with_symplog %>%
+  group_by(dataID) %>%
+  mutate(across(c(DateTime,SymptomLog), ~lead(.), .names = "{.col}lead")) %>% # make the var lead
+  ungroup()
+
+
+#remove any rows not associated with tasks
+df_symplog_lead<-df_symplog_lead %>% drop_na(accuracy)
+
+
+#replace NAs in symptom log with 0
+df_symplog_lead<-df_symplog_lead %>% mutate(SymptomLoglead = ifelse(is.na(SymptomLoglead), 0, SymptomLoglead))
+
+
+# find out which symptom logs are within 4 hours of an EMA
+df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(DateTimelead, DateTime, units = "hours") <= 4) & SymptomLoglead == 1, 1, 0))
+
+# get only subjects who have completed symptom logs
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
+highSymp_id<-unique(high_symptom_count$dataID)
+
+df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id)
+
+
+#metacognitive bias only (significant)
+model<-glmer(Log_within4Hours ~  zmeanConf + (1 | dataID), data = df_symplog_lead, 
+             family = binomial, control = glmerControl(optimizer = "bobyqa"),
+             nAGQ = 10)
+
+
+#check overdispersion
+library(blmeco)
+blmeco::dispersion_glmer(model) #value indicates no overdispersion
+summary(model)
+
+#with slopes
+summary(glmer(Log_within4Hours ~  zmeanConf + (0+zmeanConf | dataID), data = df_symplog_lead, 
+              family = binomial))
+
+#controlling for other task measures
+summary(glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead, 
+           family = binomial, control = glmerControl(optimizer = "bobyqa"),
+           nAGQ = 10))
+
+#make new plot with high and low frequency loggers removed
+
+m <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead, 
+           family = binomial, control = glmerControl(optimizer = "bobyqa"),
+           nAGQ = 10)
+
+set_theme(base = theme_bw()) # for plots
+# Extract model estimates with confidence intervals
+df_est <- tidy(m, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "zabs_evdiff" ~ "Signal Strength",
+    term == "zmeanConf" ~ "Metacognitive Bias",
+    term == "zmeanChoiceRT" ~ "Choice RT",
+    term == "zAccuracy" ~ "Staircased Accuracy",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of red colours
+green_gradient <- colorRampPalette(c("#ffd6d6", "#ff0000"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("ylab", size = 20) +
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))
 
 
 ##### Controlling for state variables in metacognitive bias -> symptom log analysis #####
@@ -3771,11 +4058,107 @@ model <-lmerTest::lmer(zmeanConf ~ Lag_within4Hours + Lead_within4Hours + (1 | d
 library(blmeco)
 blmeco::dispersion_glmer(model) #value indicates no overdispersion
 
+#Post-review: compare model with and without random intercepts
+model <- lmerTest::lmer(zmeanConf ~ Lag_within4Hours + Lead_within4Hours + (1 | dataID), data = df_symplog_task)
+
+reduced_model <- lm(zmeanConf ~ Lag_within4Hours + Lead_within4Hours, data = df_symplog_task)  
+
+anova(model, reduced_model, test = "Chisq")
+
 #with slopes
 summary(lmerTest::lmer(zmeanConf ~ Lag_within4Hours + Lead_within4Hours + (Lag_within4Hours | dataID) + (Lead_within4Hours | dataID), data = df_symplog_task)) 
 
 #with gender and age
 summary(lmerTest::lmer(zmeanConf ~ Lag_within4Hours + Lead_within4Hours + zAge + Gender_2 + (1 | dataID), data = df_symplog_task))
+
+
+# Define custom labels for predictor variables
+custom_labels <- c("Future Symptom Log" = "Lead_within4Hours", "Past Symptom Log" = "Lag_within4Hours")
+
+# Plot with updated labels
+plot_model(model, type = "est", title = "Effects of Past and Future Symptom Log on Meta-Cognitive Bias",
+           show.values = TRUE, show.p = TRUE, value.offset = .3, vline.color = "black",
+           axis.labels = names(custom_labels))
+
+
+# Extract model estimates with confidence intervals
+df_est <- tidy(model, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "Lead_within4Hours" ~ "Future Symptom Log",
+    term == "Lag_within4Hours" ~ "Past Symptom Log",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of red colors
+green_gradient <- colorRampPalette(c("#ffd6d6", "#ff0000"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("xlab", size = 20)+
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))+
+  coord_flip()
+
+##### Post-review: check in only people who have logged more than once and remove high frequency logger #####
+
+#combine symptom logs with prior created task_ema
+task_with_symplog<-dplyr::bind_rows(task_data, symptom_log_filtered)
+task_with_symplog<-task_with_symplog[order(task_with_symplog$dataID, task_with_symplog$DateTime),]
+
+# get only symptom logs 4 hours max before EMA
+
+#lag and lead symptom log
+df_symplog_task <- task_with_symplog %>%
+  group_by(dataID) %>%
+  mutate(across(c(DateTime,SymptomLog),
+                .fns = list(
+                  lag = ~ lag(., 1),
+                  lead = ~ lead(., 1)
+                ), 
+                .names = "{.col}{.fn}")) %>% # Lag the variables
+  ungroup()
+
+#remove any rows not associated with EMA
+df_symplog_task<-df_symplog_task %>% drop_na(accuracy)
+
+
+#replace NAs in symptom log with 0
+df_symplog_task<-df_symplog_task %>% mutate(SymptomLoglag = ifelse(is.na(SymptomLoglag), 0, SymptomLoglag))
+
+df_symplog_task<-df_symplog_task %>% mutate(SymptomLoglead = ifelse(is.na(SymptomLoglead), 0, SymptomLoglead))
+
+
+# find out which symptom logs are within 4 hours of an EMA
+df_symplog_task<-df_symplog_task %>% mutate(Lag_within4Hours = ifelse((difftime(DateTime, DateTimelag, units = "hours") <= 4) & SymptomLoglag == 1, 1, 0))
+
+df_symplog_task<-df_symplog_task %>% mutate(Lead_within4Hours = ifelse((difftime(DateTimelead, DateTime, units = "hours") <= 4) & SymptomLoglead == 1, 1, 0))
+
+# if we want to check only participants who have completed symptom logs
+
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
+highSymp_id<-unique(high_symptom_count$dataID)
+
+df_symplog_task <- subset(df_symplog_task, dataID %in% highSymp_id)
+
+# do lmer and plotting
+
+# directionality on metacognitive bias
+model <-lmerTest::lmer(zmeanConf ~ Lag_within4Hours + Lead_within4Hours + (1 | dataID), data = df_symplog_task)
 
 
 # Define custom labels for predictor variables
@@ -3867,8 +4250,17 @@ model <-lmerTest::lmer(zConfidence ~ Lag_within4Hours + Lead_within4Hours + (1 |
 
 blmeco::dispersion_glmer(model) #value indicates no overdispersion
 
-#checking with slopes (failed to converge)
-summary(lmerTest::lmer(zConfidence ~ Lag_within4Hours + Lead_within4Hours + (Lag_within4Hours | dataID) + (Lead_within4Hours | dataID), data = df_symplog_task)) 
+#Post-review: compare model with and without random intercepts
+model <- lmerTest::lmer(zConfidence ~ Lag_within4Hours + Lead_within4Hours + (1 | dataID), data = df_symplog_task)
+
+reduced_model <- lm(zConfidence ~ Lag_within4Hours + Lead_within4Hours, data = df_symplog_task)  
+
+anova(model, reduced_model, test = "Chisq")
+
+#checking with slopes 
+summary(lmerTest::lmer(zConfidence ~ Lag_within4Hours + Lead_within4Hours + 
+                         (Lag_within4Hours + Lead_within4Hours | dataID), data = df_symplog_task,
+                       control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))) 
 
 
 #checking with age and gender
@@ -3934,16 +4326,112 @@ ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
   coord_flip()
 
 
-#for OCD severity
+##### Post-review: check in only people who have logged more than once and remove high frequency logger #####
+combined<-dplyr::bind_rows(EMA_data_filtered, symptom_log_filtered)
+combined<-combined[order(combined$dataID, combined$DateTime),]
+
+# get only symptom logs 4 hours max before EMA
+
+#lag and lead symptom log
+df_symplog_task <- combined %>%
+  group_by(dataID) %>%
+  mutate(across(c(DateTime,SymptomLog),
+                .fns = list(
+                  lag = ~ lag(., 1),
+                  lead = ~ lead(., 1)
+                ), 
+                .names = "{.col}{.fn}")) %>% # Lag the variables
+  ungroup()
+
+
+#remove any rows not associated with EMA
+df_symplog_task<-df_symplog_task %>% drop_na(OCD)
+
+#replace NAs in symptom log with 0
+df_symplog_task<-df_symplog_task %>% mutate(SymptomLoglag = ifelse(is.na(SymptomLoglag), 0, SymptomLoglag))
+
+df_symplog_task<-df_symplog_task %>% mutate(SymptomLoglead = ifelse(is.na(SymptomLoglead), 0, SymptomLoglead))
+
+
+# find out which symptom logs are within 4 hours of an EMA
+df_symplog_task<-df_symplog_task %>% mutate(Lag_within4Hours = ifelse((difftime(DateTime, DateTimelag, units = "hours") <= 4) & SymptomLoglag == 1, 1, 0))
+
+df_symplog_task<-df_symplog_task %>% mutate(Lead_within4Hours = ifelse((difftime(DateTimelead, DateTime, units = "hours") <= 4) & SymptomLoglead == 1, 1, 0))
+
+# if we want to check only participants who have completed symptom logs
+
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
+highSymp_id<-unique(high_symptom_count$dataID)
+
+df_symplog_task <- subset(df_symplog_task, dataID %in% highSymp_id)
+
+# for confidence
+
+# do lmer and plotting
+model <-lmerTest::lmer(zConfidence ~ Lag_within4Hours + Lead_within4Hours + (1 | dataID), data = df_symplog_task)
+
+# Define custom labels for predictor variables
+custom_labels <- c("Future Symptom Log" = "Lead_within4Hours", "Past Symptom Log" = "Lag_within4Hours")
+
+# Plot with updated labels
+plot_model(model, type = "est", title = "Effects of Past and Future Symptom Log on EMA Confidence",
+           show.values = TRUE, show.p = TRUE, value.offset = .3, vline.color = "black",
+           axis.labels = names(custom_labels))
+
+
+# Extract model estimates with confidence intervals
+df_est <- tidy(model, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "Lead_within4Hours" ~ "Future Symptom Log",
+    term == "Lag_within4Hours" ~ "Past Symptom Log",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of green colors
+green_gradient <- colorRampPalette(c("#d0f0c0", "#006400"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("xlab", size = 20)+
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))+
+  coord_flip()
+
+
+
+#### for OCD severity ####
 
 # do lmer and plotting
 model <-lmerTest::lmer(zOCD ~ Lag_within4Hours + Lead_within4Hours + (1 | dataID), data = df_symplog_task)
 
 blmeco::dispersion_glmer(model) #value indicates no overdispersion
 
-#checking with slopes
-summary(lmerTest::lmer(zOCD ~ Lag_within4Hours + Lead_within4Hours + (Lag_within4Hours | dataID) + (Lead_within4Hours | dataID), data = df_symplog_task)) 
+#Post-review: compare model with and without random intercepts
+model <- lmerTest::lmer(zOCD~ Lag_within4Hours + Lead_within4Hours + (1 | dataID), data = df_symplog_task)
 
+reduced_model <- lm(zOCD ~ Lag_within4Hours + Lead_within4Hours, data = df_symplog_task)  
+
+anova(model, reduced_model, test = "Chisq")
+
+#checking with slopes
+summary(lmerTest::lmer(zOCD ~ Lag_within4Hours + Lead_within4Hours + (Lag_within4Hours + Lead_within4Hours  | dataID), data = df_symplog_task,
+                       control = lmerControl(optCtrl = list(maxfun = 1000000)))) 
 
 #checking with age and gender
 summary(lmerTest::lmer(zOCD ~ Lag_within4Hours + Lead_within4Hours + zAge + Gender_2 + (1| dataID), data = df_symplog_task)) 
@@ -3992,7 +4480,7 @@ df_est <- df_est %>%
   mutate(term = factor(term, levels = term),  # Preserve order
          fill_id = row_number())  # Numeric index for color gradient
 
-# Create a gradient of green colors
+# Create a gradient of pink colors
 green_gradient <- colorRampPalette(c("pink", "pink3"))(nrow(df_est))  # light to dark green
 
 # Plot
@@ -4008,6 +4496,298 @@ ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
   theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
         axis.text.y = element_text(size = 20, hjust = 1))+
   coord_flip()
+
+
+#### Post-review - split half analysis to see how results change from first 7 to next 7 days ####
+
+##### symptom log plot #####
+
+#remove >14
+symptom_log_filtered<-symptom_log_filtered[symptom_log_filtered$Day < 15,]
+
+symLogs_perDay<-symptom_log_filtered %>%
+  group_by(dataID, Day) %>%
+  summarise(num_sympLogs_perDay = n())
+
+num_symp_summary<-group_by(symLogs_perDay, Day) %>%
+  summarise(
+    count = n(),
+    mean = mean(num_sympLogs_perDay, na.rm = TRUE),
+    sd = sd(num_sympLogs_perDay, na.rm = TRUE),
+    se_Score = sd(num_sympLogs_perDay, na.rm = TRUE) / sqrt(n())
+  )
+
+num_symp_summary$Day<-as.factor(num_symp_summary$Day)
+
+# Plot number of people logging symptoms per day in study (1 - 14)
+num_symp_summary %>%
+  ggplot(aes(x=Day, y=count, fill=count)) +
+  geom_bar(stat="identity") +
+  #geom_errorbar(aes(ymin=mean - se_Score, ymax=mean + se_Score), width=0.2) +
+  theme_bw() +
+  labs(y = "Num Subjects Logging Symptoms", title = "Subjects Logging Symptoms by Day") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  theme(
+    plot.title = element_text(size = 15),
+    axis.title.x = element_text(size = 15),
+    axis.title.y = element_text(size = 15),
+    axis.text = element_text(size = 12)
+  )
+
+
+##### Do analyses in days 1 - 7 vs 8 - 14 #####
+
+##### For state confidence #####
+combined<-dplyr::bind_rows(EMA_data_filtered, symptom_log_filtered)
+combined<-combined[order(combined$dataID, combined$DateTime),]
+
+#make symptom log leading var
+df_symplog_lead <- combined %>%
+  group_by(dataID) %>%
+  mutate(across(c(DateTime, Time_of_day, SymptomLog), ~lead(.), .names = "{.col}lead")) %>% # make the var lead
+  ungroup()
+
+#replace NAs in symptom log with 0
+df_symplog_lead<-df_symplog_lead %>% mutate(SymptomLoglead = ifelse(is.na(SymptomLoglead), 0, SymptomLoglead))
+
+
+# find out which symptom logs are within 4 hours of an EMA
+df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(DateTimelead, DateTime, units = "hours") <= 4) & SymptomLoglead == 1, 1, 0))
+
+# if we want to check only participants who have completed symptom logs
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count >= 1, ]
+highSymp_id<-unique(high_symptom_count$dataID)
+
+df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id)
+
+#dividing dataset into week 1 and week 2
+df_symplog_lead_week1<-df_symplog_lead[df_symplog_lead$Day < 8 ,]
+df_symplog_lead_week2<-df_symplog_lead[df_symplog_lead$Day > 7 ,]
+
+require(lme4)
+
+#check with all state variables predicting future symptom log
+model_week1 <- glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear + (1 | dataID), data = df_symplog_lead_week1, 
+               family = binomial, control = glmerControl(optimizer = "bobyqa"),
+               nAGQ = 10)
+
+summary(model_week1)
+
+set_theme(base = theme_bw()) # for plots
+# Extract model estimates with confidence intervals
+df_est <- tidy(model_week1, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "zOCD" ~ "OCD Severity Rating",
+    term == "zAnxiety" ~ "Anxiety",
+    term == "zHappy" ~ "Happiness",
+    term == "zSleep" ~ "Sleep Quality",
+    term == "zThink_clear" ~ "Brain Fog",
+    term == "zConfidence" ~ "Self-Confidence",
+    term == "zSleep" ~ "Sleep Quality",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of green colors
+green_gradient <- colorRampPalette(c("#d0f0c0", "#006400"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("ylab", size = 20) +
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))+
+  ylim(-1, 1)
+
+
+model_week2 <- glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear + (1 | dataID), data = df_symplog_lead_week2, 
+                     family = binomial, control = glmerControl(optimizer = "bobyqa"),
+                     nAGQ = 10)
+
+summary(model_week2)
+
+# Extract model estimates with confidence intervals
+df_est <- tidy(model_week2, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "zOCD" ~ "OCD Severity Rating",
+    term == "zAnxiety" ~ "Anxiety",
+    term == "zHappy" ~ "Happiness",
+    term == "zSleep" ~ "Sleep Quality",
+    term == "zThink_clear" ~ "Brain Fog",
+    term == "zConfidence" ~ "Self-Confidence",
+    term == "zSleep" ~ "Sleep Quality",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of green colors
+green_gradient <- colorRampPalette(c("#d0f0c0", "#006400"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("ylab", size = 20) +
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))+
+  ylim(-1, 1)
+
+##### for metacognitive bias #####
+
+task_with_symplog<-dplyr::bind_rows(task_data, symptom_log_filtered)
+task_with_symplog<-task_with_symplog[order(task_with_symplog$dataID, task_with_symplog$DateTime),]
+
+#make symptom log leading var
+df_symplog_lead <- task_with_symplog %>%
+  group_by(dataID) %>%
+  mutate(across(c(DateTime,SymptomLog), ~lead(.), .names = "{.col}lead")) %>% # make the var lead
+  ungroup()
+
+
+#remove any rows not associated with tasks
+df_symplog_lead<-df_symplog_lead %>% drop_na(accuracy)
+
+
+#replace NAs in symptom log with 0
+df_symplog_lead<-df_symplog_lead %>% mutate(SymptomLoglead = ifelse(is.na(SymptomLoglead), 0, SymptomLoglead))
+
+
+# find out which symptom logs are within 4 hours of an EMA
+df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(DateTimelead, DateTime, units = "hours") <= 4) & SymptomLoglead == 1, 1, 0))
+
+# get only subjects who have completed symptom logs
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count >= 1, ]
+highSymp_id<-unique(high_symptom_count$dataID)
+
+df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id)
+
+#dividing dataset into week 1 and week 2
+df_symplog_lead_week1<-df_symplog_lead[df_symplog_lead$Day < 8 ,]
+df_symplog_lead_week2<-df_symplog_lead[df_symplog_lead$Day > 7 ,]
+
+
+#basic model
+model_week1<-glmer(Log_within4Hours ~  zmeanConf + (1 | dataID), data = df_symplog_lead_week1, 
+             family = binomial, control = glmerControl(optimizer = "bobyqa"),
+             nAGQ = 10)
+
+summary(model_week1)
+
+
+model_week2<-glmer(Log_within4Hours ~  zmeanConf + (1 | dataID), data = df_symplog_lead_week2, 
+                   family = binomial, control = glmerControl(optimizer = "bobyqa"),
+                   nAGQ = 10)
+
+summary(model_week2)
+
+#controlling for other task measures
+model_week1 <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead_week1, 
+           family = binomial, control = glmerControl(optimizer = "bobyqa"),
+           nAGQ = 10)
+
+summary(model_week1)
+
+df_est <- tidy(model_week1, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "zabs_evdiff" ~ "Signal Strength",
+    term == "zmeanConf" ~ "Metacognitive Bias",
+    term == "zmeanChoiceRT" ~ "Choice RT",
+    term == "zAccuracy" ~ "Staircased Accuracy",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of red colours
+green_gradient <- colorRampPalette(c("#ffd6d6", "#ff0000"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("ylab", size = 20) +
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))
+
+
+model_week2 <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead_week2, 
+                     family = binomial, control = glmerControl(optimizer = "bobyqa"),
+                     nAGQ = 10)
+
+summary(model_week2)
+
+df_est <- tidy(model_week2, effects = "fixed", conf.int = TRUE)%>%
+  filter(term != "(Intercept)") # Remove the intercept
+
+df_est <- df_est %>%
+  mutate(term = case_when(
+    term == "zabs_evdiff" ~ "Signal Strength",
+    term == "zmeanConf" ~ "Metacognitive Bias",
+    term == "zmeanChoiceRT" ~ "Choice RT",
+    term == "zAccuracy" ~ "Staircased Accuracy",
+    TRUE ~ term  # Keep other terms unchanged
+  ))
+
+
+df_est <- df_est %>%
+  arrange(estimate) %>%
+  mutate(term = factor(term, levels = term),  # Preserve order
+         fill_id = row_number())  # Numeric index for color gradient
+
+# Create a gradient of red colours
+green_gradient <- colorRampPalette(c("#ffd6d6", "#ff0000"))(nrow(df_est))  # light to dark green
+
+# Plot
+ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  scale_fill_gradientn(colors = green_gradient, guide = "none") +  # Gradient fill
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_point(size = 3, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "",
+       x = "", y = "Model Estimate") +
+  font("ylab", size = 20) +
+  theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
+        axis.text.y = element_text(size = 20, hjust = 1))
 
 
 #### Reliability measures ####
