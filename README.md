@@ -2,7 +2,8 @@
 
 Pre-processing and analysis code for ecological momentary cognitive testing (EMCT) study investigating how metacognition and OCD symptoms fluctuate on a moment-to-moment basis. Anonymised datasets can be found here: <https://osf.io/x7h5k/?view_only=>
 
-Analyses were conducted using in RStudio using R version 4.3.3
+Main analyses were conducted using in RStudio using R version 4.3.3 and can be found in EMCT_analysis_final.R (including all libraries/dependencies).
+
 
 ## Model
 
