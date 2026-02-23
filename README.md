@@ -21,3 +21,5 @@ or within the Jupyter notebook:
 ```python
 !pip install cpm-toolbox
 ```
+
+Estimating metacognitive sensitivity with the meta-d model for the current dataset required approximately 25 minutes on a 24-core Intel Core i9 CPU with 32 GB of RAM.
