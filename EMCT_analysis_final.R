@@ -141,7 +141,7 @@ mean_notif_perSub <- complete_data %>%
 to_remove<-mean_notif_perSub[mean_notif_perSub$Number_notifs_answered < 0.5,]
 
 #### Post-Review: if we want to try with 0.75 completion threshold ####
-#to_remove<-mean_notif_perSub[mean_notif_perSub$Number_notifs_answered < 0.75,]
+#to_remove<-mean_notif_perSub[mean_notif_perSub$Number_notifs_answered <= 0.75,]
 
 to_remove <- to_remove$dataID
 
@@ -1577,12 +1577,13 @@ ggplot(as.data.frame(symplog_count), aes(factor(Symptom_count), n)) +
   geom_col(color="black", fill="tan1", position = 'dodge')+
   xlab ("Symptoms Logged") + ylab("Counts")+
   theme_bw()+
-  ggtitle (label = 'Symptoms Logged Per Participant; N = 119 with >= 1 symptom log')+
+  ggtitle (label = 'Symptoms Logged Per Participant (Full Sample); N = 119 with ≥ 1 symptom log')+
+  ylim(0,20)+
   font("xlab", size = 15)+
   font("ylab", size = 15)+
   font("title", size = 15)+
-  theme(axis.text.x = element_text(size = 10),
-        axis.text.y = element_text(size = 10))
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
 
 
 
@@ -3600,9 +3601,7 @@ summary(glmer(Log_within4Hours ~  zConfidence + (1 | dataID), data = df_symplog_
               family = binomial, control = glmerControl(optimizer = "bobyqa"),
               nAGQ = 10))
 
-
-##### Post-review, check in only people who have logged more than once and remove high logger #####
-
+##### Post-review: remove participants who show skewed logging #####
 combined<-dplyr::bind_rows(EMA_data_filtered, symptom_log_filtered)
 combined<-combined[order(combined$dataID, combined$DateTime),]
 
@@ -3619,26 +3618,54 @@ df_symplog_lead<-df_symplog_lead %>% mutate(SymptomLoglead = ifelse(is.na(Sympto
 # find out which symptom logs are within 4 hours of an EMA
 df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(DateTimelead, DateTime, units = "hours") <= 4) & SymptomLoglead == 1, 1, 0))
 
+#check results minus outliers
+Q<-quantile(summary_ema_OCI_traitQ$Symptom_count, probs=c(.25, .75), na.rm = TRUE)
+iqr <- IQR(summary_ema_OCI_traitQ$Symptom_count, na.rm = TRUE)
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
 
-#checking results in only people who logged more than one symptom log, and remove extremely high logger
-high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
+
+#retain data if it is NOT above the 75th or below the 25th percentile
+#by a factor of 1.5 times the IQR.
+
+eliminated<- subset(summary_ema_OCI_traitQ, summary_ema_OCI_traitQ$Symptom_count > (Q[1] - 1.5*iqr) &
+                      summary_ema_OCI_traitQ$Symptom_count < (Q[2]+1.5*iqr)) 
+
+
+
+high_symptom_count<- eliminated[eliminated$Symptom_count > 2, ]
+#high_symptom_count <- na.omit(high_symptom_count)
+
+# make new histogram with less skew
+
+symplog_count<-high_symptom_count %>% count(Symptom_count)
+
+ggplot(as.data.frame(symplog_count), aes(factor(Symptom_count), n)) +     
+  geom_col(color="black", fill="tan1", position = 'dodge')+
+  xlab ("Symptoms Logged") + ylab("Counts")+
+  theme_bw()+
+  ggtitle (label = 'Removing overly frequent & infrequent logging. N = 79 with 3 ≥ Symptoms Logged ≤ 39')+
+  ylim(0,20)+
+  font("xlab", size = 15)+
+  font("ylab", size = 15)+
+  font("title", size = 15)+
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
+
+
 highSymp_id<-unique(high_symptom_count$dataID)
 
-df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id)
+df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id) #subset of data
 
 require(lme4)
 
 #check with all state variables predicting future symptom log
 m <- glmer(Log_within4Hours ~ zOCD + zAnxiety + zHappy + zSleep + zConfidence + zThink_clear + (1 | dataID), data = df_symplog_lead, 
-               family = binomial, control = glmerControl(optimizer = "bobyqa"),
-               nAGQ = 10)
+           family = binomial, control = glmerControl(optimizer = "bobyqa"),
+           nAGQ = 10)
 
 summary(m)
-
-#check with just confidence
-summary(glmer(Log_within4Hours ~ zConfidence + (1 | dataID), data = df_symplog_lead, 
-               family = binomial, control = glmerControl(optimizer = "bobyqa"),
-               nAGQ = 10))
+exp(fixef(m))  
 
 # make plot with model excluding subjects
 
@@ -3744,6 +3771,8 @@ m <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccura
 model <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead, 
                family = binomial, control = glmerControl(optimizer = "bobyqa"),
                nAGQ = 1)
+
+
 reduced_model <- glm(
   Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy,
   data   = df_symplog_lead,
@@ -3776,6 +3805,31 @@ summary(glmer(Log_within4Hours ~  zmeanConf + zm_ratio + (1 | dataID), data = df
 summary(glmer(Log_within4Hours ~  zm_ratio + (1 | dataID), data = df_symplog_lead, 
               family = binomial, control = glmerControl(optimizer = "bobyqa"),
               nAGQ = 10))
+
+
+#post-review: check for *actual* bias (i.e., mean confidence - mean accuracy)
+df_symplog_lead$bias <- df_symplog_lead$meanConf - df_symplog_lead$accuracy
+
+df_symplog_lead <-df_symplog_lead %>% 
+  group_by(dataID) %>% 
+  mutate(zbias = scale(bias),
+         na.rm = TRUE)
+
+model_bias_only<- glmer(Log_within4Hours ~  zbias + (1 | dataID), data = df_symplog_lead, 
+              family = binomial, control = glmerControl(optimizer = "bobyqa"),
+              nAGQ = 10)
+
+summary(model_bias_only)
+exp(fixef(model_bias_only))  
+
+
+model_bias<-glmer(Log_within4Hours ~  zbias + zmeanChoiceRT + zabs_evdiff + (1 | dataID), data = df_symplog_lead, 
+             family = binomial, control = glmerControl(optimizer = "bobyqa"),
+             nAGQ = 10)
+
+summary(model_bias)
+exp(fixef(model_bias))  
+
 
 #plotting metacognitive bias predicting symptom log for paper
 
@@ -3849,10 +3903,7 @@ summary(glmer(Log_within4Hours ~  zmeanConf + (1 | dataID), data = df_symplog_le
               family = binomial, control = glmerControl(optimizer = "bobyqa"),
               nAGQ = 10))
 
-
-##### Post-review:check in only people who have logged more than once, and remove high frequency logger #####
-
-##### Task #####
+##### Post-review: Remove participants who show skewed logging #####
 
 task_with_symplog<-dplyr::bind_rows(task_data, symptom_log_filtered)
 task_with_symplog<-task_with_symplog[order(task_with_symplog$dataID, task_with_symplog$DateTime),]
@@ -3879,8 +3930,29 @@ df_symplog_lead<-df_symplog_lead %>% mutate(Log_within4Hours = ifelse((difftime(
 high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
 highSymp_id<-unique(high_symptom_count$dataID)
 
-df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id)
 
+#check results minus outliers
+Q<-quantile(summary_ema_OCI_traitQ$Symptom_count, probs=c(.25, .75), na.rm = TRUE)
+iqr <- IQR(summary_ema_OCI_traitQ$Symptom_count, na.rm = TRUE)
+up <-  Q[2]+1.5*iqr # Upper Range  
+low<- Q[1]-1.5*iqr # Lower Range
+
+
+#retain data if it is NOT above the 75th or below the 25th percentile
+#by a factor of 1.5 times the IQR.
+
+eliminated<- subset(summary_ema_OCI_traitQ, summary_ema_OCI_traitQ$Symptom_count > (Q[1] - 1.5*iqr) &
+                      summary_ema_OCI_traitQ$Symptom_count < (Q[2]+1.5*iqr)) 
+
+hist(eliminated$Symptom_count) 
+
+high_symptom_count<- eliminated[eliminated$Symptom_count > 2, ]
+
+hist(high_symptom_count$Symptom_count) 
+
+highSymp_id<-unique(high_symptom_count$dataID)
+
+df_symplog_lead <- subset(df_symplog_lead, dataID %in% highSymp_id) #subset of data
 
 #metacognitive bias only (significant)
 model<-glmer(Log_within4Hours ~  zmeanConf + (1 | dataID), data = df_symplog_lead, 
@@ -3899,14 +3971,15 @@ summary(glmer(Log_within4Hours ~  zmeanConf + (0+zmeanConf | dataID), data = df_
 
 #controlling for other task measures
 summary(glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead, 
-           family = binomial, control = glmerControl(optimizer = "bobyqa"),
-           nAGQ = 10))
+              family = binomial, control = glmerControl(optimizer = "bobyqa"),
+              nAGQ = 10))
 
-#make new plot with high and low frequency loggers removed
 
 m <- glmer(Log_within4Hours ~ zabs_evdiff + zmeanConf + zmeanChoiceRT +  zAccuracy + (1 | dataID), data = df_symplog_lead, 
            family = binomial, control = glmerControl(optimizer = "bobyqa"),
            nAGQ = 10)
+#get odds ratio
+exp(fixef(m))    
 
 set_theme(base = theme_bw()) # for plots
 # Extract model estimates with confidence intervals
@@ -3943,6 +4016,7 @@ ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
   font("ylab", size = 20) +
   theme(axis.text.x = element_text(angle = 45, size = 20, hjust = 1),
         axis.text.y = element_text(size = 20, hjust = 1))
+
 
 
 ##### Controlling for state variables in metacognitive bias -> symptom log analysis #####
@@ -4114,7 +4188,7 @@ ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
         axis.text.y = element_text(size = 20, hjust = 1))+
   coord_flip()
 
-##### Post-review: check in only people who have logged more than once and remove high frequency logger #####
+##### Post-review:remove skew #####
 
 #combine symptom logs with prior created task_ema
 task_with_symplog<-dplyr::bind_rows(task_data, symptom_log_filtered)
@@ -4150,7 +4224,7 @@ df_symplog_task<-df_symplog_task %>% mutate(Lead_within4Hours = ifelse((difftime
 
 # if we want to check only participants who have completed symptom logs
 
-high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 2 & summary_ema_OCI_traitQ$Symptom_count < 40, ]
 highSymp_id<-unique(high_symptom_count$dataID)
 
 df_symplog_task <- subset(df_symplog_task, dataID %in% highSymp_id)
@@ -4326,7 +4400,7 @@ ggplot(df_est, aes(x = term, y = estimate, fill = fill_id)) +
   coord_flip()
 
 
-##### Post-review: check in only people who have logged more than once and remove high frequency logger #####
+##### Post-review: remove skew #####
 combined<-dplyr::bind_rows(EMA_data_filtered, symptom_log_filtered)
 combined<-combined[order(combined$dataID, combined$DateTime),]
 
@@ -4360,10 +4434,11 @@ df_symplog_task<-df_symplog_task %>% mutate(Lead_within4Hours = ifelse((difftime
 
 # if we want to check only participants who have completed symptom logs
 
-high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 1 & summary_ema_OCI_traitQ$Symptom_count < 175, ]
+high_symptom_count<- summary_ema_OCI_traitQ[summary_ema_OCI_traitQ$Symptom_count > 2 & summary_ema_OCI_traitQ$Symptom_count < 40, ]
 highSymp_id<-unique(high_symptom_count$dataID)
 
 df_symplog_task <- subset(df_symplog_task, dataID %in% highSymp_id)
+
 
 # for confidence
 
